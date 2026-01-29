@@ -11,11 +11,29 @@
 
 *An intelligent agent that monitors GitHub Actions workflows, analyzes failures, and takes automated remediation actions using the GitHub Copilot SDK.*
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#-configuration) • [Architecture](#-architecture) • [Development](#-development)
+[Features](#-features) • [Quick Start](#-quick-start) • [How It Works](#-how-it-works) • [Configuration](#-configuration) • [Architecture](#-architecture)
 
 </div>
 
 ---
+
+## 🎯 What This Does
+
+The GitHub SRE Agent is an **autonomous AI agent** that acts as your on-call Site Reliability Engineer for GitHub Actions. When a workflow fails, the agent:
+
+1. **Analyzes the failure** - Fetches logs, checks GitHub status, searches for known issues
+2. **Makes intelligent decisions** - Determines if it's a transient failure (retry) or a code bug (create issue)
+3. **Takes action automatically** - Retries workflows, creates detailed issues, or skips if appropriate
+4. **Tracks resolution** - When a tracked workflow succeeds, automatically closes the related issue
+
+### Key Capabilities
+
+| Capability | Description |
+|------------|-------------|
+| **GitHub MCP Integration** | Uses GitHub's Model Context Protocol for Actions, Issues, and Repository operations |
+| **Exa AI Web Search** | Searches the web for error messages, Stack Overflow solutions, and documentation |
+| **Workflow Tracking** | Tracks failed workflows and auto-closes issues when they're fixed |
+| **Persistent Memory** | Maintains notes and context across workflow runs |
 
 ## ✨ Features
 
@@ -24,7 +42,8 @@
 <td width="50%">
 
 ### 🔍 Intelligent Analysis
-- Fetches and analyzes workflow logs
+- Fetches and analyzes workflow logs via GitHub MCP
+- Searches web for error solutions using Exa AI
 - Identifies transient vs. persistent failures
 - Recognizes patterns across runs
 
@@ -33,7 +52,8 @@
 
 ### 🔄 Automated Remediation
 - Retries failed workflows intelligently
-- Creates issues for tracking problems
+- Creates detailed issues with root cause analysis
+- **Auto-closes issues when workflows are fixed**
 - Avoids duplicate actions
 
 </td>
@@ -42,7 +62,7 @@
 <td width="50%">
 
 ### 📊 GitHub Status Awareness
-- Checks GitHub system status
+- Checks GitHub system status before actions
 - Considers outages before retrying
 - Provides context-aware decisions
 
@@ -50,40 +70,83 @@
 <td width="50%">
 
 ### 📝 Persistent Memory
+- Tracks workflows with open issues
 - Maintains debugging notes
-- Tracks ongoing issues
 - Remembers context between runs
 
 </td>
 </tr>
 </table>
 
-## 🏗️ Architecture
+## 🔄 How It Works
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              GitHub                                          │
-│  ┌─────────────┐     ┌─────────────────┐     ┌─────────────────────────┐    │
-│  │  Workflow   │────▶│    Webhooks     │────▶│   workflow_run Event    │    │
-│  │  Completes  │     │  (workflow_run) │     │                         │    │
-│  └─────────────┘     └─────────────────┘     └───────────┬─────────────┘    │
-└──────────────────────────────────────────────────────────┼──────────────────┘
-                                                           │
-                                                           ▼
+│                         Workflow Failure Flow                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Workflow Fails ──▶ 2. Agent Analyzes ──▶ 3. Decision                   │
+│         │                     │                    │                        │
+│         │              ┌──────┴──────┐      ┌──────┴──────┐                │
+│         │              │ • Fetch logs│      │ • RETRY     │                │
+│         │              │ • Check GH  │      │ • CREATE    │                │
+│         │              │   status    │      │   ISSUE     │                │
+│         │              │ • Search web│      │ • SKIP      │                │
+│         │              └─────────────┘      └──────┬──────┘                │
+│         │                                          │                        │
+│         │                              ┌───────────┴───────────┐           │
+│         │                              ▼                       ▼           │
+│         │                      [Create Issue]          [Retry Workflow]    │
+│         │                              │                       │           │
+│         │                              ▼                       │           │
+│         │                    [Track Workflow] ◀────────────────┘           │
+│         │                              │                                    │
+└─────────┼──────────────────────────────┼────────────────────────────────────┘
+          │                              │
+          ▼                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Workflow Success Flow                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Workflow Succeeds ──▶ Check if Tracked ──▶ Yes ──▶ Close Issue            │
+│                              │                         │                    │
+│                              ▼                         ▼                    │
+│                             No                   Untrack Workflow           │
+│                              │                         │                    │
+│                              ▼                         ▼                    │
+│                           [Skip]               [Add Comment & Close]        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 🏗️ Architecture
+
+```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                           GitHub SRE Agent                                    │
+│                                                                              │
 │  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────────┐     │
 │  │  Webhook Server │────▶│  Event Handler  │────▶│    SRE Agent Core   │     │
 │  │     (Hono)      │     │                 │     │   (Copilot SDK)     │     │
 │  └─────────────────┘     └─────────────────┘     └─────────┬───────────┘     │
 │                                                            │                  │
-│  ┌──────────────────────────────┬──────────────────────────┼─────────────┐   │
-│  │                              │                          │             │   │
-│  ▼                              ▼                          ▼             ▼   │
-│  ┌──────────┐           ┌──────────────┐          ┌────────────┐ ┌─────────┐│
-│  │  Retry   │           │ Create Issue │          │  Get Logs  │ │ Notes   ││
-│  │ Workflow │           │              │          │            │ │ Store   ││
-│  └──────────┘           └──────────────┘          └────────────┘ └─────────┘│
+│                          ┌─────────────────────────────────┼─────────────┐   │
+│                          │            MCP Servers          │             │   │
+│                          │  ┌──────────────┐  ┌──────────────┐          │   │
+│                          │  │  GitHub MCP  │  │   Exa AI MCP │          │   │
+│                          │  │  • Actions   │  │  • Web Search│          │   │
+│                          │  │  • Issues    │  │  • Research  │          │   │
+│                          │  │  • Repos     │  │  • Crawling  │          │   │
+│                          │  └──────────────┘  └──────────────┘          │   │
+│                          └──────────────────────────────────────────────┘   │
+│                                                            │                  │
+│  ┌──────────────────────────┬──────────────────────────────┼─────────────┐   │
+│  │     Custom Tools         │                              │             │   │
+│  ▼                          ▼                              ▼             ▼   │
+│  ┌──────────────┐    ┌──────────────┐           ┌────────────┐ ┌─────────┐  │
+│  │ check_github │    │ manage_notes │           │  track_    │ │Workflow │  │
+│  │    _status   │    │              │           │  workflow  │ │ Tracker │  │
+│  └──────────────┘    └──────────────┘           └────────────┘ └─────────┘  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -92,15 +155,14 @@
 ### Prerequisites
 
 - **Node.js** 18.0.0 or higher
-- **GitHub Copilot CLI** installed and authenticated
-- **GitHub Personal Access Token** with `repo` and `workflow` permissions
+- **GitHub Copilot CLI** installed and authenticated (`gh copilot`)
 - **ngrok** (for local development)
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/github-sre-agent.git
+git clone https://github.com/htekdev/github-sre-agent.git
 cd github-sre-agent
 
 # Install dependencies
@@ -119,16 +181,20 @@ Edit `.env` with your credentials:
 PORT=3000
 NODE_ENV=development
 
-# GitHub
-GITHUB_TOKEN=ghp_your_personal_access_token
+# GitHub (webhook secret only - auth handled by Copilot SDK)
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 
+# Exa AI (optional - enables web search)
+EXA_API_KEY=your_exa_api_key
+
 # Copilot SDK
-COPILOT_MODEL=gpt-4.1
+COPILOT_MODEL=Claude Sonnet 4
 
 # Logging
 LOG_LEVEL=info
 ```
+
+> **Note:** No `GITHUB_TOKEN` needed! The Copilot SDK handles authentication automatically via GitHub MCP.
 
 ### Running Locally
 
@@ -189,21 +255,6 @@ ignore:
     - "dependabot/*"  # Ignore dependabot branches
 ```
 
-### Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `version` | number | `1` | Configuration schema version |
-| `enabled` | boolean | `true` | Enable/disable the agent for this repo |
-| `instructions` | string | - | Custom AI instructions |
-| `actions.retry.enabled` | boolean | `true` | Allow automatic retries |
-| `actions.retry.maxAttempts` | number | `3` | Maximum retry attempts |
-| `actions.createIssue.enabled` | boolean | `true` | Allow issue creation |
-| `actions.createIssue.labels` | string[] | `["sre-agent", "automated"]` | Default labels |
-| `workflows` | string[] | `[]` | Workflows to monitor (empty = all) |
-| `ignore.conclusions` | string[] | `[]` | Conclusions to ignore |
-| `ignore.branches` | string[] | `[]` | Branch patterns to ignore |
-
 ## 🛠️ Development
 
 ### Project Structure
@@ -216,15 +267,16 @@ github-sre-agent/
 │   ├── server/               # Hono web server
 │   │   └── routes/           # API routes
 │   ├── agent/                # SRE Agent implementation
-│   │   └── tools/            # Tool abstractions
-│   ├── services/             # External service integrations
-│   │   ├── GitHubService.ts  # GitHub API wrapper
+│   │   ├── SREAgent.ts       # Main agent with MCP config
+│   │   └── tools/            # Custom tools (status, notes, tracking)
+│   ├── services/             # Service integrations
 │   │   ├── StatusService.ts  # GitHub status checker
-│   │   └── NoteStore.ts      # Notes persistence
+│   │   ├── NoteStore.ts      # Notes persistence
+│   │   └── WorkflowTracker.ts # Workflow tracking for auto-close
 │   ├── handlers/             # Event handlers
 │   └── types/                # TypeScript types
-├── data/                     # Local storage
-├── docs/                     # Documentation
+├── data/                     # Local storage (notes, tracked workflows)
+├── prompts/                  # Prompt files for agent operations
 └── package.json
 ```
 
@@ -234,54 +286,26 @@ github-sre-agent/
 npm run dev          # Start development server with hot reload
 npm run build        # Build for production
 npm run start        # Start production server
-npm run tunnel       # Start ngrok tunnel
-npm run dev:tunnel   # Start dev server + ngrok together
-npm run lint         # Run ESLint
-npm run typecheck    # Run TypeScript type checking
 ```
 
-### Adding New Tools
+### Testing the Agent
 
-The agent uses the GitHub Copilot SDK's `defineTool` function. Add new tools in `src/agent/SREAgent.ts`:
+Use the included test workflows:
 
-```typescript
-defineTool("my_new_tool", {
-  description: "Description for the AI to understand when to use this tool",
-  parameters: z.object({
-    param1: z.string().describe("Parameter description"),
-    param2: z.number().optional().describe("Optional parameter"),
-  }),
-  handler: async ({ param1, param2 }) => {
-    // Tool implementation
-    return { success: true, data: "result" };
-  },
-}),
+- **CI Build** (`.github/workflows/test.yml`) - Simulates a failing/passing CI
+- **Flaky Test** (`.github/workflows/flaky-test.yml`) - Succeeds on 3rd attempt
+
+Reset experiment state:
+```bash
+# Use the reset prompt with Copilot
+# Or manually delete issues and clear data/
 ```
-
-## 📊 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/webhook` | GitHub webhook receiver |
-| `GET` | `/health` | Health check |
-| `GET` | `/status` | Detailed status info |
-| `GET` | `/` | API information |
 
 ## 🔒 Security
 
-- **Webhook Signature Verification**: All incoming webhooks are verified using HMAC-SHA256
-- **Token Security**: GitHub tokens are stored in environment variables, never committed
-- **Rate Limiting**: The agent respects GitHub API rate limits
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **No Token Storage**: GitHub authentication handled by Copilot SDK OAuth
+- **Webhook Signature Verification**: All webhooks verified using HMAC-SHA256
+- **MCP Security**: GitHub MCP uses Copilot's authenticated session
 
 ## 📄 License
 
@@ -291,6 +315,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Built with ❤️ using [GitHub Copilot SDK](https://github.com/github/copilot-sdk)**
+**Built with ❤️ using [GitHub Copilot SDK](https://github.com/github/copilot-sdk) and [GitHub MCP](https://github.com/github/github-mcp-server)**
 
 </div>
