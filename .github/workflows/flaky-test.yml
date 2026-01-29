@@ -1,0 +1,34 @@
+name: Flaky Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  flaky-test:
+    name: Flaky Test (succeeds on 3rd attempt)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Simulate flaky test
+        run: |
+          ATTEMPT="${{ github.run_attempt }}"
+          echo "🔄 Attempt #${ATTEMPT} of this workflow run"
+          echo ""
+          
+          if [ "$ATTEMPT" -lt 3 ]; then
+            echo "🔴 TRANSIENT FAILURE: Connection timed out"
+            echo ""
+            echo "Error: ETIMEDOUT - Connection to test-database.internal:5432 timed out after 30000ms"
+            echo "This appears to be a temporary network issue."
+            echo ""
+            echo "Hint: This is a known flaky test - infrastructure sometimes has connectivity issues."
+            echo "Recommendation: RETRY this workflow (attempt $ATTEMPT of 3)"
+            echo ""
+            exit 1
+          else
+            echo "✅ SUCCESS! Connection established on attempt #${ATTEMPT}"
+            echo "All tests passed."
+            exit 0
+          fi
