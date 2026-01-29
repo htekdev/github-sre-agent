@@ -1,5 +1,6 @@
 import { SREAgent } from "../agent/SREAgent.js";
 import { NoteStore } from "../services/NoteStore.js";
+import { WorkflowTracker } from "../services/WorkflowTracker.js";
 import { createChildLogger } from "../services/logger.js";
 import type { WorkflowRunEvent, RepoConfig } from "../types/index.js";
 import { repoConfigSchema } from "../types/index.js";
@@ -9,10 +10,12 @@ const logger = createChildLogger("WorkflowRunHandler");
 export class WorkflowRunHandler {
   private agent: SREAgent;
   private noteStore: NoteStore;
+  private workflowTracker: WorkflowTracker;
 
   constructor() {
     this.agent = new SREAgent();
     this.noteStore = NoteStore.getInstance();
+    this.workflowTracker = WorkflowTracker.getInstance();
   }
 
   /**
@@ -50,7 +53,45 @@ export class WorkflowRunHandler {
       return { processed: false };
     }
 
-    // Only process failures and timeouts by default
+    // Initialize stores
+    await this.noteStore.init();
+    await this.workflowTracker.init();
+
+    // Check if this is a SUCCESS for a tracked workflow
+    if (workflow_run.conclusion === "success") {
+      const tracked = await this.workflowTracker.get(
+        repository.owner.login,
+        repository.name,
+        workflow_run.workflow_id
+      );
+      
+      if (tracked) {
+        logger.info(
+          { 
+            repo: repository.full_name, 
+            workflow: workflow_run.name,
+            issueNumber: tracked.issueNumber,
+          },
+          "Tracked workflow succeeded! Processing to close issue."
+        );
+        
+        // Process with agent to close the issue
+        try {
+          const response = await this.agent.handleWorkflowSuccess(event, repoConfig, tracked);
+          return { processed: true, response };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          logger.error({ error: message }, "Failed to process workflow success");
+          throw error;
+        }
+      }
+      
+      // Not tracked, ignore success
+      logger.debug({ conclusion: "success" }, "Workflow succeeded but not tracked, ignoring");
+      return { processed: false };
+    }
+
+    // Only process failures and timeouts
     if (!this.shouldProcess(workflow_run.conclusion)) {
       logger.debug(
         { conclusion: workflow_run.conclusion },
@@ -59,10 +100,7 @@ export class WorkflowRunHandler {
       return { processed: false };
     }
 
-    // Initialize note store
-    await this.noteStore.init();
-
-    // Process with the SRE agent
+    // Process failure with the SRE agent
     try {
       const response = await this.agent.handleWorkflowRun(event, repoConfig);
       

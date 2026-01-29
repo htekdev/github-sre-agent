@@ -5,6 +5,7 @@ import { config } from "../config/index.js";
 import { createChildLogger } from "../services/logger.js";
 import { StatusService } from "../services/StatusService.js";
 import { NoteStore } from "../services/NoteStore.js";
+import { WorkflowTracker } from "../services/WorkflowTracker.js";
 import type { WorkflowRunEvent, RepoConfig } from "../types/index.js";
 
 const logger = createChildLogger("SREAgent");
@@ -27,6 +28,7 @@ export class SREAgent {
   private createTools() {
     const statusService = StatusService.getInstance();
     const noteStore = NoteStore.getInstance();
+    const workflowTracker = WorkflowTracker.getInstance();
 
     return [
       // Check GitHub Status Tool
@@ -96,6 +98,67 @@ Actions: create, query, get_summary, resolve. Use to track patterns and remember
                 return note 
                   ? { success: true, message: `Resolved note: ${note.title}` }
                   : { success: false, error: "Note not found" };
+              }
+              default:
+                return { success: false, error: "Unknown action" };
+            }
+          } catch (error) {
+            return { success: false, error: String(error) };
+          }
+        },
+      }),
+
+      // Track Workflow Tool
+      defineTool("track_workflow", {
+        description: `Track a workflow that has a related GitHub issue. When you create an issue for a failed workflow,
+use this tool to track it. When the workflow later succeeds, you can close the issue automatically.
+Actions: track (start tracking), untrack (stop tracking), check (check if tracked), list (list all tracked).`,
+        parameters: z.object({
+          action: z.enum(["track", "untrack", "check", "list"]).describe("Action to perform"),
+          owner: z.string().optional().describe("Repository owner"),
+          repo: z.string().optional().describe("Repository name"),
+          workflowId: z.number().optional().describe("Workflow ID"),
+          workflowName: z.string().optional().describe("Workflow name (for track)"),
+          issueNumber: z.number().optional().describe("Issue number (for track)"),
+          failedRunId: z.number().optional().describe("Failed run ID (for track)"),
+        }),
+        handler: async ({ action, owner, repo, workflowId, workflowName, issueNumber, failedRunId }) => {
+          try {
+            await workflowTracker.init();
+            
+            switch (action) {
+              case "track": {
+                if (!owner || !repo || !workflowId || !workflowName || !issueNumber || !failedRunId) {
+                  return { success: false, error: "owner, repo, workflowId, workflowName, issueNumber, and failedRunId required" };
+                }
+                const tracked = await workflowTracker.track({
+                  owner, repo, workflowId, workflowName, issueNumber, failedRunId
+                });
+                return { success: true, message: `Now tracking workflow "${workflowName}" with issue #${issueNumber}`, tracked };
+              }
+              case "untrack": {
+                if (!owner || !repo || !workflowId) {
+                  return { success: false, error: "owner, repo, and workflowId required" };
+                }
+                const untracked = await workflowTracker.untrack(owner, repo, workflowId);
+                return untracked
+                  ? { success: true, message: "Stopped tracking workflow" }
+                  : { success: false, error: "Workflow was not being tracked" };
+              }
+              case "check": {
+                if (!owner || !repo || !workflowId) {
+                  return { success: false, error: "owner, repo, and workflowId required" };
+                }
+                const tracked = await workflowTracker.get(owner, repo, workflowId);
+                return tracked
+                  ? { success: true, isTracked: true, tracked }
+                  : { success: true, isTracked: false };
+              }
+              case "list": {
+                const all = owner && repo
+                  ? await workflowTracker.getForRepo(owner, repo)
+                  : await workflowTracker.getAll();
+                return { success: true, trackedWorkflows: all };
               }
               default:
                 return { success: false, error: "Unknown action" };
@@ -285,6 +348,10 @@ You also have custom tools for:
 - Issue labels: ${repoConfig.actions.createIssue.labels.join(", ")}
 ${customInstructions}
 
+## Workflow Tracking
+When you create an issue for a failed workflow, use the **track_workflow** tool to track it.
+This allows the system to automatically notify you when the workflow succeeds, so you can close the issue.
+
 ## Response Format
 Provide a brief summary of your analysis and actions taken. Be concise but informative.`;
   }
@@ -299,6 +366,7 @@ Provide a brief summary of your analysis and actions taken. Be concise but infor
 
 **Repository:** ${repository.full_name}
 **Workflow:** ${workflow_run.name || "Unknown"}
+**Workflow ID:** ${workflow_run.workflow_id}
 **Run ID:** ${workflow_run.id}
 **Run Number:** ${workflow_run.run_number}
 **Attempt:** ${workflow_run.run_attempt}
@@ -312,9 +380,112 @@ Analyze this workflow run and determine the appropriate action:
 1. If the conclusion is "failure" or "timed_out", investigate and decide whether to retry or create an issue
 2. If this appears to be a transient failure (infrastructure, flaky test, etc.), consider retrying
 3. If this appears to be a legitimate code issue, create an issue with your analysis
-4. Check for any existing notes about this workflow or similar failures
-5. Update or create notes to track your findings
+4. **IMPORTANT**: If you create an issue, use track_workflow to track this workflow so we can close the issue when it's fixed
+5. Check for any existing notes about this workflow or similar failures
+6. Update or create notes to track your findings
 
 Begin your analysis.`;
+  }
+
+  /**
+   * Handle a workflow that succeeded after previously failing
+   */
+  async handleWorkflowSuccess(
+    event: WorkflowRunEvent,
+    repoConfig: RepoConfig,
+    tracked: { issueNumber: number; workflowName: string; failedRunId: number }
+  ): Promise<string> {
+    const { workflow_run, repository } = event;
+
+    logger.info(
+      { 
+        repo: repository.full_name, 
+        workflow: workflow_run.name,
+        runId: workflow_run.id,
+        issueNumber: tracked.issueNumber,
+      },
+      "Processing workflow success for tracked issue"
+    );
+
+    const successPrompt = `## Workflow Success Event
+
+**Repository:** ${repository.full_name}
+**Workflow:** ${workflow_run.name || "Unknown"}
+**Workflow ID:** ${workflow_run.workflow_id}
+**Run ID:** ${workflow_run.id}
+**Run Number:** ${workflow_run.run_number}
+**Branch:** ${workflow_run.head_branch || "Unknown"}
+**Conclusion:** ${workflow_run.conclusion}
+**URL:** ${workflow_run.html_url}
+
+## Context
+This workflow was previously failing and we created issue #${tracked.issueNumber} to track it.
+The original failure was run ID: ${tracked.failedRunId}
+
+## Task
+The workflow is now passing! Please:
+1. Add a comment to issue #${tracked.issueNumber} explaining that the workflow is now passing
+2. Close issue #${tracked.issueNumber}
+3. Use track_workflow with action "untrack" to stop tracking this workflow
+4. Create a note documenting that this issue was auto-resolved
+
+Be concise in your comment.`;
+
+    try {
+      await this.init();
+
+      const sessionId = `sre-success-${workflow_run.id}-${Date.now()}`;
+      
+      const mcpServers: Record<string, MCPServerConfig> = {
+        github: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          tools: ["*"],
+        },
+      };
+
+      const session = await this.client.createSession({
+        sessionId,
+        model: config.COPILOT_MODEL,
+        streaming: true,
+        tools: this.createTools(),
+        mcpServers,
+        systemMessage: {
+          content: this.buildSystemMessage(repoConfig),
+        },
+      });
+
+      let response = "";
+      
+      session.on((evt: SessionEvent) => {
+        if (evt.type === "assistant.message_delta") {
+          response += evt.data.deltaContent;
+          process.stdout.write(evt.data.deltaContent);
+        }
+        if (evt.type === "assistant.reasoning_delta") {
+          process.stdout.write(`\x1b[2m${evt.data.deltaContent}\x1b[0m`);
+        }
+        if (evt.type === "tool.execution_start") {
+          logger.info({ tool: evt.data.toolName }, "Tool executing");
+        }
+        if (evt.type === "session.error") {
+          logger.error({ error: evt.data }, "Session error");
+        }
+      });
+
+      const result = await session.sendAndWait({ prompt: successPrompt }, 120000);
+      console.log("\n");
+      
+      await session.destroy();
+
+      const finalResponse = result?.data?.content || response;
+      logger.info({ repo: repository.full_name, runId: workflow_run.id }, "Agent completed success handling");
+      
+      return finalResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      logger.error({ error: message, repo: repository.full_name }, "Agent failed to handle workflow success");
+      throw error;
+    }
   }
 }
