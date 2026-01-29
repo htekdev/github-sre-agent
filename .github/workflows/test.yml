@@ -1,4 +1,4 @@
-name: Test Workflow
+name: CI Build
 
 on:
   push:
@@ -8,38 +8,41 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-success:
-    name: Passing Test
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       
-      - name: Run passing test
-        run: |
-          echo "✅ This test passes!"
-          exit 0
+      - name: Setup Node.js
+        run: echo "Setting up Node.js 20.x..."
 
-  test-failure:
-    name: Failing Test (for SRE Agent)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Simulate critical bug
+      - name: Install dependencies
+        run: echo "Installing dependencies..."
+
+      - name: Run tests
         run: |
-          echo "🔴 CRITICAL: Build failure detected"
+          echo "Running test suite..."
           echo ""
-          echo "Error: TypeError: Cannot read property 'id' of undefined"
-          echo "    at UserService.getUser (src/services/user.ts:42:15)"
-          echo "    at async AuthController.login (src/controllers/auth.ts:28:20)"
+          echo "  PASS  src/utils/helpers.test.ts"
+          echo "  PASS  src/services/email.test.ts"
+          echo "  FAIL  src/services/user.test.ts"
           echo ""
-          echo "This appears to be a code bug introduced in the latest commit."
-          echo "The 'user' object is null when it should have been fetched from the database."
+          echo "● UserService › getUser › should return user by ID"
           echo ""
-          echo "ACTION REQUIRED: This is NOT a transient failure."
-          echo "A developer needs to investigate the null reference in UserService.getUser()"
+          echo "  TypeError: Cannot read property 'id' of undefined"
           echo ""
-          echo "npm ERR! Test failed. See above for details."
+          echo "    40 |   async getUser(userId: string): Promise<User> {"
+          echo "    41 |     const user = await this.db.users.findOne({ id: userId });"
+          echo "  > 42 |     return { id: user.id, email: user.email, name: user.name };"
+          echo "       |                     ^"
+          echo "    43 |   }"
+          echo ""
+          echo "    at UserService.getUser (src/services/user.ts:42:21)"
+          echo "    at Object.<anonymous> (src/services/user.test.ts:28:20)"
+          echo ""
+          echo "Test Suites: 1 failed, 2 passed, 3 total"
+          echo "Tests:       1 failed, 15 passed, 16 total"
+          echo ""
           exit 1
