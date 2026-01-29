@@ -1,19 +1,17 @@
-import { SREAgent } from "../agent/index.js";
-import { GitHubService } from "../services/GitHubService.js";
+import { SREAgent } from "../agent/SREAgent.js";
 import { NoteStore } from "../services/NoteStore.js";
 import { createChildLogger } from "../services/logger.js";
 import type { WorkflowRunEvent, RepoConfig } from "../types/index.js";
+import { repoConfigSchema } from "../types/index.js";
 
 const logger = createChildLogger("WorkflowRunHandler");
 
 export class WorkflowRunHandler {
   private agent: SREAgent;
-  private github: GitHubService;
   private noteStore: NoteStore;
 
   constructor() {
     this.agent = new SREAgent();
-    this.github = GitHubService.getInstance();
     this.noteStore = NoteStore.getInstance();
   }
 
@@ -29,11 +27,8 @@ export class WorkflowRunHandler {
       return { processed: false };
     }
 
-    // Get repository configuration
-    const repoConfig = await this.github.getRepoConfig(
-      repository.owner.login,
-      repository.name
-    );
+    // Use default repo config - the agent can fetch .github/sre-agent.yml via MCP if needed
+    const repoConfig = repoConfigSchema.parse({});
 
     // Check if agent is enabled for this repo
     if (!repoConfig.enabled) {
@@ -157,6 +152,6 @@ export class WorkflowRunHandler {
    * Cleanup resources
    */
   async destroy(): Promise<void> {
-    await this.agent.stop();
+    // CLI-based agent doesn't need cleanup
   }
 }

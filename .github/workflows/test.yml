@@ -27,9 +27,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
-      - name: Simulate flaky test
+      - name: Simulate critical bug
         run: |
-          echo "🔴 Simulating a test failure..."
-          echo "Error: Connection timed out to test database"
+          echo "🔴 CRITICAL: Build failure detected"
+          echo ""
+          echo "Error: TypeError: Cannot read property 'id' of undefined"
+          echo "    at UserService.getUser (src/services/user.ts:42:15)"
+          echo "    at async AuthController.login (src/controllers/auth.ts:28:20)"
+          echo ""
+          echo "This appears to be a code bug introduced in the latest commit."
+          echo "The 'user' object is null when it should have been fetched from the database."
+          echo ""
+          echo "ACTION REQUIRED: This is NOT a transient failure."
+          echo "A developer needs to investigate the null reference in UserService.getUser()"
+          echo ""
           echo "npm ERR! Test failed. See above for details."
           exit 1

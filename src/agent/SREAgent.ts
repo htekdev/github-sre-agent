@@ -1,9 +1,8 @@
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
-import type { SessionEvent } from "@github/copilot-sdk";
+import type { SessionEvent, MCPServerConfig } from "@github/copilot-sdk";
 import { z } from "zod";
 import { config } from "../config/index.js";
 import { createChildLogger } from "../services/logger.js";
-import { GitHubService } from "../services/GitHubService.js";
 import { StatusService } from "../services/StatusService.js";
 import { NoteStore } from "../services/NoteStore.js";
 import type { WorkflowRunEvent, RepoConfig } from "../types/index.js";
@@ -15,94 +14,21 @@ export class SREAgent {
   private initialized = false;
 
   constructor() {
-    this.client = new CopilotClient();
+    this.client = new CopilotClient({
+      autoStart:true,
+      autoRestart: true,
+    });
   }
 
   /**
    * Create tool definitions for the Copilot SDK
+   * Note: GitHub operations (issues, workflows, repos) are handled by GitHub MCP tools
    */
   private createTools() {
-    const github = GitHubService.getInstance();
     const statusService = StatusService.getInstance();
     const noteStore = NoteStore.getInstance();
 
     return [
-      // Retry Workflow Tool
-      defineTool("retry_workflow", {
-        description: `Retry a failed GitHub Actions workflow run. By default, only retries failed jobs. 
-Set failedOnly to false to retry the entire workflow.
-Use this when you've determined a workflow failure is transient or a known issue has been resolved.`,
-        parameters: z.object({
-          owner: z.string().describe("Repository owner"),
-          repo: z.string().describe("Repository name"),
-          runId: z.number().describe("Workflow run ID to retry"),
-          failedOnly: z.boolean().optional().default(true).describe("Only retry failed jobs"),
-        }),
-        handler: async ({ owner, repo, runId, failedOnly }) => {
-          try {
-            const attempts = await github.getWorkflowRunAttempts(owner, repo, runId);
-            if (attempts >= 3) {
-              return { success: false, error: `Already retried ${attempts} times` };
-            }
-            if (failedOnly) {
-              await github.rerunFailedJobs(owner, repo, runId);
-            } else {
-              await github.rerunWorkflow(owner, repo, runId);
-            }
-            return { success: true, message: `Retry triggered for run ${runId}` };
-          } catch (error) {
-            return { success: false, error: String(error) };
-          }
-        },
-      }),
-
-      // Create Issue Tool
-      defineTool("create_issue", {
-        description: `Create a GitHub issue to track a workflow problem or required action.
-Include relevant context like workflow run links, error messages, and your analysis.`,
-        parameters: z.object({
-          owner: z.string().describe("Repository owner"),
-          repo: z.string().describe("Repository name"),
-          title: z.string().describe("Issue title"),
-          body: z.string().describe("Issue body in markdown"),
-          labels: z.array(z.string()).optional().default([]).describe("Labels to apply"),
-          relatedRunId: z.number().optional().describe("Related workflow run ID"),
-        }),
-        handler: async ({ owner, repo, title, body, labels, relatedRunId }) => {
-          try {
-            let fullBody = body;
-            if (relatedRunId) {
-              fullBody += `\n\n---\n**Related Run:** https://github.com/${owner}/${repo}/actions/runs/${relatedRunId}`;
-            }
-            fullBody += `\n\n_Created by SRE Agent_`;
-            
-            const issueNumber = await github.createIssue(owner, repo, title, fullBody, labels, []);
-            return { success: true, issueNumber, url: `https://github.com/${owner}/${repo}/issues/${issueNumber}` };
-          } catch (error) {
-            return { success: false, error: String(error) };
-          }
-        },
-      }),
-
-      // Get Workflow Logs Tool
-      defineTool("get_workflow_logs", {
-        description: `Fetch logs from failed jobs in a GitHub Actions workflow run.
-Returns the last 200 lines from up to 3 failed jobs. Use to understand why a workflow failed.`,
-        parameters: z.object({
-          owner: z.string().describe("Repository owner"),
-          repo: z.string().describe("Repository name"),
-          runId: z.number().describe("Workflow run ID"),
-        }),
-        handler: async ({ owner, repo, runId }) => {
-          try {
-            const logs = await github.getFailedJobLogs(owner, repo, runId);
-            return { success: true, logs };
-          } catch (error) {
-            return { success: false, error: String(error) };
-          }
-        },
-      }),
-
       // Check GitHub Status Tool
       defineTool("check_github_status", {
         description: `Check GitHub system status for outages or incidents.
@@ -211,8 +137,6 @@ Actions: create, query, get_summary, resolve. Use to track patterns and remember
     event: WorkflowRunEvent,
     repoConfig: RepoConfig
   ): Promise<string> {
-    await this.init();
-
     const { workflow_run, repository } = event;
 
     // Build the context prompt
@@ -229,27 +153,75 @@ Actions: create, query, get_summary, resolve. Use to track patterns and remember
     );
 
     try {
+      logger.debug("Initializing Copilot client...");
+      await this.init();
+      logger.debug("Copilot client initialized");
+
+      const sessionId = `sre-${workflow_run.id}-${Date.now()}`;
+      logger.debug({ model: config.COPILOT_MODEL, sessionId }, "Creating session with model...");
+      
+      // Build MCP servers config
+      const mcpServers: Record<string, MCPServerConfig> = {
+        // GitHub MCP server for Actions, Issues, Repos, etc.
+        github: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          tools: ["*"],
+        },
+      };
+
+      // Add Exa MCP server if API key is configured
+      if (config.EXA_API_KEY) {
+        mcpServers.exa = {
+          type: "http",
+          url: `https://mcp.exa.ai/mcp?exaApiKey=${config.EXA_API_KEY}&tools=web_search_exa,company_research_exa,crawling_exa,deep_researcher_start,deep_researcher_check`,
+          tools: ["*"],
+        };
+        logger.debug("Exa MCP server enabled");
+      }
+
       const session = await this.client.createSession({
+        sessionId,
         model: config.COPILOT_MODEL,
         streaming: true,
         tools: this.createTools(),
+        mcpServers,
         systemMessage: {
           content: this.buildSystemMessage(repoConfig),
         },
       });
+      logger.debug({ sessionId: session.sessionId }, "Session created");
 
       let response = "";
       
       session.on((evt: SessionEvent) => {
+        // logger.debug({ type: evt.type }, "Session event received");
+        
         if (evt.type === "assistant.message_delta") {
           response += evt.data.deltaContent;
+          process.stdout.write(evt.data.deltaContent);
+        }
+        if (evt.type === "assistant.reasoning_delta") {
+          // Output reasoning in a distinct style
+          process.stdout.write(`\x1b[2m${evt.data.deltaContent}\x1b[0m`);
+        }
+        if (evt.type === "assistant.message") {
+          logger.info("Assistant message complete");
         }
         if (evt.type === "tool.execution_start") {
-          logger.debug({ tool: evt.data.toolName }, "Tool execution started");
+          logger.info({ tool: evt.data.toolName }, "Tool executing");
+        }
+        if (evt.type === "session.error") {
+          logger.error({ error: evt.data }, "Session error");
+        }
+        if (evt.type === "session.idle") {
+          logger.debug("Session idle");
         }
       });
 
-      const result = await session.sendAndWait({ prompt: contextPrompt });
+      logger.debug("Sending prompt to agent...");
+      const result = await session.sendAndWait({ prompt: contextPrompt }, 120000); // 2 min timeout
+      console.log("\n");
       
       await session.destroy();
 
@@ -259,7 +231,7 @@ Actions: create, query, get_summary, resolve. Use to track patterns and remember
       return finalResponse;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      logger.error({ error: message, repo: repository.full_name }, "Agent failed to process event");
+      logger.error({ error: message, stack: error instanceof Error ? error.stack : undefined, repo: repository.full_name }, "Agent failed to process event");
       throw error;
     }
   }
@@ -272,25 +244,39 @@ Actions: create, query, get_summary, resolve. Use to track patterns and remember
       ? `\n\n## Repository-Specific Instructions\n${repoConfig.instructions}`
       : "";
 
+    const exaCapabilities = config.EXA_API_KEY 
+      ? `
+You also have access to Exa AI tools for web research:
+- **web_search_exa**: Search the web for error messages, solutions, or documentation
+- **company_research_exa**: Research companies or services related to failures
+- **crawling_exa**: Extract content from specific URLs (docs, Stack Overflow, etc.)
+- **deep_researcher_start/check**: Conduct deep research on complex issues
+`
+      : "";
+
     return `You are an expert Site Reliability Engineer (SRE) agent for GitHub Actions.
 
 ## Your Role
 You analyze GitHub Actions workflow failures and take appropriate actions to resolve issues or escalate them properly.
 
 ## Your Capabilities
-- Retry failed workflows (when appropriate)
-- Create GitHub issues for tracking problems
-- Fetch and analyze workflow logs
-- Check GitHub's status for outages
-- Maintain notes for tracking ongoing issues
+You have access to GitHub MCP tools for:
+- **Actions**: Get workflow runs, jobs, logs, re-run workflows
+- **Issues**: Create issues, search issues, add comments
+- **Repository**: Get file contents, commits, branches
+${exaCapabilities}
+You also have custom tools for:
+- **check_github_status**: Check GitHub system status for outages
+- **manage_notes**: Track debugging context and ongoing issues
 
 ## Decision Guidelines
 1. **First, check GitHub status** - If there's an outage, note it and avoid unnecessary retries
-2. **Analyze logs** - Understand the root cause before taking action
-3. **Check for patterns** - Use notes to track if this is a recurring issue
-4. **Be conservative with retries** - Don't retry more than the configured max attempts
-5. **Create issues thoughtfully** - Include relevant context, avoid duplicates
-6. **Document your reasoning** - Keep notes for future reference
+2. **Analyze logs** - Use GitHub MCP tools to fetch workflow logs and understand the root cause
+3. **Search for solutions** - If you have Exa tools, search for error messages or known issues
+4. **Check for patterns** - Use notes to track if this is a recurring issue
+5. **Be conservative with retries** - Don't retry more than the configured max attempts
+6. **Create issues thoughtfully** - Include relevant context, avoid duplicates
+7. **Document your reasoning** - Keep notes for future reference
 
 ## Configuration Limits
 - Max retry attempts: ${repoConfig.actions.retry.maxAttempts}

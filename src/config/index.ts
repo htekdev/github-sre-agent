@@ -4,9 +4,9 @@ import { z } from "zod";
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  GITHUB_TOKEN: z.string().min(1, "GITHUB_TOKEN is required"),
   GITHUB_WEBHOOK_SECRET: z.string().min(1, "GITHUB_WEBHOOK_SECRET is required"),
-  COPILOT_MODEL: z.string().default("gpt-4.1"),
+  EXA_API_KEY: z.string().optional(),
+  COPILOT_MODEL: z.string().default("Claude Sonnet 4"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 });
 
@@ -21,6 +21,7 @@ function loadEnv(): Env {
     process.exit(1);
   }
   
+  console.log(`📋 Config loaded: model=${result.data.COPILOT_MODEL}, logLevel=${result.data.LOG_LEVEL}`);
   return result.data;
 }
 
