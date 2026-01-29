@@ -1,0 +1,46 @@
+{
+  "name": "github-sre-agent",
+  "version": "0.1.0",
+  "description": "AI-powered SRE agent for GitHub Actions using GitHub Copilot SDK",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "tunnel": "ngrok http 3000",
+    "dev:tunnel": "concurrently \"npm run dev\" \"npm run tunnel\"",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "github",
+    "sre",
+    "copilot",
+    "webhooks",
+    "actions",
+    "agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@github/copilot-sdk": "^0.1.8",
+    "@hono/node-server": "^1.13.7",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.16",
+    "octokit": "^4.1.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "yaml": "^2.7.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
