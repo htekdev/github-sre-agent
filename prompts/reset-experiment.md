@@ -1,0 +1,80 @@
+# Reset SRE Agent Experiment
+
+Reset the repository to a clean state for testing the SRE agent.
+
+## Tasks
+
+### 1. Delete All Issues
+Delete (not close) all issues in the repository `htekdev/github-sre-agent`.
+
+### 2. Clear Tracked Workflows
+The local `data/tracked-workflows.json` file should be cleared or deleted.
+
+### 3. Restore Broken CI Workflow
+Update `.github/workflows/test.yml` to have a failing test:
+
+```yaml
+name: CI Build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        run: echo "Setting up Node.js 20.x..."
+
+      - name: Install dependencies
+        run: echo "Installing dependencies..."
+
+      - name: Run tests
+        run: |
+          echo "Running test suite..."
+          echo ""
+          echo "  PASS  src/utils/helpers.test.ts"
+          echo "  PASS  src/services/email.test.ts"
+          echo "  FAIL  src/services/user.test.ts"
+          echo ""
+          echo "● UserService › getUser › should return user by ID"
+          echo ""
+          echo "  TypeError: Cannot read property 'id' of undefined"
+          echo ""
+          echo "    40 |   async getUser(userId: string): Promise<User> {"
+          echo "    41 |     const user = await this.db.users.findOne({ id: userId });"
+          echo "  > 42 |     return { id: user.id, email: user.email, name: user.name };"
+          echo "       |                     ^"
+          echo "    43 |   }"
+          echo ""
+          echo "    at UserService.getUser (src/services/user.ts:42:21)"
+          echo "    at Object.<anonymous> (src/services/user.test.ts:28:20)"
+          echo ""
+          echo "Test Suites: 1 failed, 2 passed, 3 total"
+          echo "Tests:       1 failed, 15 passed, 16 total"
+          echo ""
+          exit 1
+```
+
+### 4. Commit and Push
+Commit the workflow change with message: "Break CI for SRE agent testing"
+
+### 5. Clear Local Data
+Delete or clear these files if they exist:
+- `data/tracked-workflows.json`
+- `data/notes.json`
+
+## Summary
+After completing these tasks:
+- All issues deleted
+- CI workflow is broken again
+- Local tracking data cleared
+- Ready for fresh SRE agent testing
