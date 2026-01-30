@@ -218,17 +218,41 @@ Then configure your GitHub repository webhook:
 
 ### Repository Configuration
 
-Create `.github/sre-agent.yml` in your repository to customize the agent's behavior:
+The SRE agent automatically looks for repository-specific instructions in **`.github/copilot-instructions.md`** before analyzing any workflow failure.
+
+Create this file in your repository to provide custom SRE instructions:
+
+```markdown
+# SRE Instructions for [Your Project]
+
+## Build & Test Commands
+- Use `pnpm` instead of `npm`
+- Run tests with `pnpm test:ci`
+- Build with `pnpm build`
+
+## Known Issues
+- Tests may be flaky on Node 18.x - retry once before creating issue
+- Database migrations require manual intervention
+
+## Retry Policy
+- Always check if tests pass locally before suggesting retry
+- Maximum 2 retries for flaky tests
+
+## Issue Tracking
+- Create issues with label "ci-failure" for tracking
+- Assign to @maintainer-team for urgent failures
+- Reference related PRs in issue description
+```
+
+The agent will read this file **before** each analysis and follow your custom instructions.
+
+### Advanced Configuration (Optional)
+
+For fine-grained control, you can also create `.github/sre-agent.yml`:
 
 ```yaml
 version: 1
 enabled: true
-
-# Custom instructions for the AI agent
-instructions: |
-  - This repo uses pnpm, not npm
-  - Always check if tests pass before suggesting retry
-  - Create issues with label "ci-failure" for tracking
 
 # Action-specific settings
 actions:
