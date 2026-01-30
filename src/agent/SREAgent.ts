@@ -303,10 +303,6 @@ Actions: track (start tracking), untrack (stop tracking), check (check if tracke
    * Build the system message for the agent
    */
   private buildSystemMessage(repoConfig: RepoConfig): string {
-    const customInstructions = repoConfig.instructions 
-      ? `\n\n## Repository-Specific Instructions\n${repoConfig.instructions}`
-      : "";
-
     const exaCapabilities = config.EXA_API_KEY 
       ? `
 You also have access to Exa AI tools for web research:
@@ -360,7 +356,6 @@ You also have custom tools for:
 - Auto-retry enabled: ${repoConfig.actions.retry.enabled}
 - Auto-issue creation enabled: ${repoConfig.actions.createIssue.enabled}
 - Issue labels: ${repoConfig.actions.createIssue.labels.join(", ")}
-${customInstructions}
 
 ## Workflow Tracking
 When you create an issue for a failed workflow, use the **track_workflow** tool to track it.

@@ -72,8 +72,6 @@ export const repoConfigSchema = z.object({
   version: z.number().default(1),
   enabled: z.boolean().default(true),
   
-  instructions: z.string().optional(),
-  
   actions: z.object({
     retry: z.object({
       enabled: z.boolean().default(true),
