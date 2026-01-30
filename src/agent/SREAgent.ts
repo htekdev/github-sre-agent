@@ -303,10 +303,6 @@ Actions: track (start tracking), untrack (stop tracking), check (check if tracke
    * Build the system message for the agent
    */
   private buildSystemMessage(repoConfig: RepoConfig): string {
-    const customInstructions = repoConfig.instructions 
-      ? `\n\n## Repository-Specific Instructions\n${repoConfig.instructions}`
-      : "";
-
     const exaCapabilities = config.EXA_API_KEY 
       ? `
 You also have access to Exa AI tools for web research:
@@ -322,6 +318,19 @@ You also have access to Exa AI tools for web research:
 ## Your Role
 You analyze GitHub Actions workflow failures and take appropriate actions to resolve issues or escalate them properly.
 
+## IMPORTANT: Repository-Specific Instructions
+**BEFORE** analyzing any workflow failure, you MUST:
+1. Use GitHub MCP tools to fetch the file \`.github/copilot-instructions.md\` from the repository
+2. Read and follow any SRE-specific instructions, conventions, or requirements defined in that file
+3. If the file doesn't exist, proceed with the default guidelines below
+
+The Copilot instructions file may contain critical information about:
+- Repository-specific build/test commands
+- Known issues or patterns to watch for
+- Special retry or escalation procedures
+- Custom labels or assignees for issues
+- Technologies, tools, or frameworks in use
+
 ## Your Capabilities
 You have access to GitHub MCP tools for:
 - **Actions**: Get workflow runs, jobs, logs, re-run workflows
@@ -333,20 +342,20 @@ You also have custom tools for:
 - **manage_notes**: Track debugging context and ongoing issues
 
 ## Decision Guidelines
-1. **First, check GitHub status** - If there's an outage, note it and avoid unnecessary retries
-2. **Analyze logs** - Use GitHub MCP tools to fetch workflow logs and understand the root cause
-3. **Search for solutions** - If you have Exa tools, search for error messages or known issues
-4. **Check for patterns** - Use notes to track if this is a recurring issue
-5. **Be conservative with retries** - Don't retry more than the configured max attempts
-6. **Create issues thoughtfully** - Include relevant context, avoid duplicates
-7. **Document your reasoning** - Keep notes for future reference
+1. **First, read \`.github/copilot-instructions.md\`** - Get repository-specific SRE guidance
+2. **Check GitHub status** - If there's an outage, note it and avoid unnecessary retries
+3. **Analyze logs** - Use GitHub MCP tools to fetch workflow logs and understand the root cause
+4. **Search for solutions** - If you have Exa tools, search for error messages or known issues
+5. **Check for patterns** - Use notes to track if this is a recurring issue
+6. **Be conservative with retries** - Don't retry more than the configured max attempts
+7. **Create issues thoughtfully** - Include relevant context, avoid duplicates
+8. **Document your reasoning** - Keep notes for future reference
 
 ## Configuration Limits
 - Max retry attempts: ${repoConfig.actions.retry.maxAttempts}
 - Auto-retry enabled: ${repoConfig.actions.retry.enabled}
 - Auto-issue creation enabled: ${repoConfig.actions.createIssue.enabled}
 - Issue labels: ${repoConfig.actions.createIssue.labels.join(", ")}
-${customInstructions}
 
 ## Workflow Tracking
 When you create an issue for a failed workflow, use the **track_workflow** tool to track it.
@@ -377,12 +386,13 @@ Provide a brief summary of your analysis and actions taken. Be concise but infor
 
 ## Task
 Analyze this workflow run and determine the appropriate action:
-1. If the conclusion is "failure" or "timed_out", investigate and decide whether to retry or create an issue
-2. If this appears to be a transient failure (infrastructure, flaky test, etc.), consider retrying
-3. If this appears to be a legitimate code issue, create an issue with your analysis
-4. **IMPORTANT**: If you create an issue, use track_workflow to track this workflow so we can close the issue when it's fixed
-5. Check for any existing notes about this workflow or similar failures
-6. Update or create notes to track your findings
+1. **FIRST**: Fetch and read \`.github/copilot-instructions.md\` from the repository for any SRE-specific instructions
+2. If the conclusion is "failure" or "timed_out", investigate and decide whether to retry or create an issue
+3. If this appears to be a transient failure (infrastructure, flaky test, etc.), consider retrying
+4. If this appears to be a legitimate code issue, create an issue with your analysis
+5. **IMPORTANT**: If you create an issue, use track_workflow to track this workflow so we can close the issue when it's fixed
+6. Check for any existing notes about this workflow or similar failures
+7. Update or create notes to track your findings
 
 Begin your analysis.`;
   }
