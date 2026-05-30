@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "tunnel": "ngrok http 3000",
     "dev:tunnel": "concurrently \"npm run dev\" \"npm run tunnel\"",
+    "test": "node --test test/**/*.test.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
